@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Constraint-Aware Recommender</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="hero">
+    <div class="container">
+      <h1>Hard Constraints Shouldn’t Be Features — They Should Be the Architecture</h1>
+      <p class="subtitle">
+        A geography-first recommender built for sparse interactions and hard delivery boundaries
+      </p>
+      <div class="hero-buttons">
+        <a href="https://github.com/mah-trigui/constraint-aware-recommender" class="btn primary">View Repository</a>
+        <a href="#idea" class="btn secondary">Explore Method</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="container">
+        <h2>Overview</h2>
+        <p>
+          This project tackles a restaurant recommendation problem with about 100 vendors, sparse user history, and strong delivery-radius constraints.
+        </p>
+        <p>
+          The central design decision was not to force collaborative filtering onto the problem. Instead, the recommender was built around the dominant marketplace constraint: geography.
+        </p>
+        <p>
+          Vendor zones were first defined geographically, customers were assigned to the nearest zone, and recommendations were then generated inside each <strong>segment × zone</strong> pair using historical vendor frequency weighted by customer-vendor proximity.
+        </p>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container">
+        <h2>Architecture</h2>
+        <img src="images/architecture.jpg" alt="Constraint-aware recommender architecture" class="architecture-image" />
+      </div>
+    </section>
+
+    <section class="section" id="idea">
+      <div class="container">
+        <h2>The Core Idea</h2>
+        <p>
+          In many recommendation problems, location is treated as one more input feature. In this project, that would have been the wrong abstraction.
+        </p>
+        <p>
+          Delivery geography is a hard constraint, not a soft preference. If a vendor is outside the realistic service area, no amount of similarity modeling can make that recommendation useful.
+        </p>
+        <div class="metric-box">
+          <p><strong>When a signal is a hard constraint, it should shape the architecture before ranking begins.</strong></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container">
+        <h2>Why collaborative filtering was not the starting point</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Small item space</h3>
+            <p>
+              The catalog contained only around 100 vendors, which reduces the value of large-scale collaborative structure.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Sparse interaction matrix</h3>
+            <p>
+              Most customers had ordered from just one or two vendors, limiting the strength of user-item similarity.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Hard geographic feasibility</h3>
+            <p>
+              Delivery radius is not a weak preference signal. It defines the feasible recommendation set.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2>Pipeline Design</h2>
+        <ul class="clean-list">
+          <li><strong>Order history aggregation:</strong> build per customer × location × vendor historical summaries</li>
+          <li><strong>Vendor processing:</strong> group raw vendor tags into broader cuisine families and clean coordinates</li>
+          <li><strong>Customer profiles:</strong> combine demographics, account tenure, and number of saved locations</li>
+          <li><strong>Vendor zones:</strong> use K-means on vendor coordinates to create spatial service zones</li>
+          <li><strong>Customer segments:</strong> build segments using gender × location count × account tenure</li>
+          <li><strong>Recommendation layer:</strong> inside each segment × zone, rank vendors by historical frequency divided by Manhattan distance</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container">
+        <h2>Selected Code Snippets</h2>
+
+        <h3>1. Vendor geographic zones</h3>
+        <pre>
+km_vend <- kmeans(
+    x = vend_valid[, .(long_clean, lat_clean)],
+    centers = 4,
+    algorithm = "MacQueen",
+    iter.max = 5000,
+    nstart = 25
+)
+        </pre>
+
+        <h3>2. Customer segmentation</h3>
+        <pre>
+profiles$age_bucket <- ifelse(profiles$client_age >= 300, "O", "N")
+profiles$loc_bucket <- ifelse(profiles$client_loc_nb == 1, 0,
+    ifelse(profiles$client_loc_nb <= 3, 1, 2)
+)
+profiles$gender_enc <- ifelse(profiles$gender == "emp", 0,
+    ifelse(profiles$gender == "Female", 1, 2)
+)
+
+profiles$segment <- paste(profiles$gender_enc, profiles$loc_bucket,
+    profiles$age_bucket, sep = "_"
+)
+        </pre>
+
+        <h3>3. Assign customers to nearest zone</h3>
+        <pre>
+assign_zone <- function(profiles, centers) {
+    zones <- apply(profiles[, .(long, lat)], 1, function(row) {
+        dists <- apply(centers, 1, function(ctr) sum((row - ctr)^2))
+        which.min(dists)
+    })
+    zones
+}
+        </pre>
+
+        <h3>4. Rank vendors inside each segment × zone pair</h3>
+        <pre>
+dist <- abs(vend_freq$vend_long - cust_long) +
+    abs(vend_freq$vend_lat - cust_lat)
+dist[dist == 0] <- 0.001
+
+vend_freq$score <- vend_freq$freq / dist
+top_vend <- vend_freq[order(-score), vendor_id][1:min(nrow(vend_freq), 10)]
+        </pre>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2>Why this matters</h2>
+        <ul class="clean-list">
+          <li>shows that recommender-system design starts with marketplace structure, not model defaults</li>
+          <li>separates hard constraints from soft preference signals</li>
+          <li>uses architecture to encode feasibility before ranking</li>
+          <li>generalizes to logistics, delivery, mobility, and location-constrained marketplaces</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container">
+        <h2>Where this pattern generalizes</h2>
+        <ul class="clean-list">
+          <li>food delivery and quick commerce</li>
+          <li>mobility and driver-passenger matching</li>
+          <li>service marketplaces with coverage zones</li>
+          <li>local inventory recommendation under physical reach constraints</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2>Key Takeaway</h2>
+        <div class="metric-box">
+          <p><strong>Before choosing the recommender model, decide which signals are constraints and which are preferences.</strong></p>
+          <p>
+            If a signal is a hard boundary, it belongs in the architecture rather than being left for the model to discover as just another feature.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt">
+      <div class="container">
+        <h2>Public Repository Scope</h2>
+        <p>
+          This public version focuses on the geography-first recommendation logic, selected feature engineering components, and project presentation. Competition data files are not included.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <p>Built as a public project showcase for constraint-aware recommender design and marketplace-aware ML architecture.</p>
+    </div>
+  </footer>
+</body>
+</html>
